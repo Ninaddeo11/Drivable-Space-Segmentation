@@ -1,182 +1,134 @@
-# Drivable Space Segmentation — MAHE Hackathon
+# Drivable Space Segmentation — MAHE Mobility Hackathon
 
-Real-time pixel-wise segmentation of drivable vs non-drivable areas using a
-**custom U-Net CNN trained from scratch** on the nuScenes dataset.
+Real-time pixel-wise segmentation of drivable vs non-drivable areas using a custom U-Net CNN trained completely from scratch on the nuScenes dataset.
 
----
+## Results
 
-## Project structure
+| Metric | Value |
+|--------|-------|
+| Model | U-Net CNN (from scratch) |
+| Parameters | 7,763,074 |
+| Best Epoch | 82 / 100 |
+| mIoU | **0.9489** |
+| Inference Speed | 43+ FPS |
+| Device | NVIDIA RTX 4060 (CUDA) |
+| Dataset | nuScenes v1.0-mini |
 
-```
-project/
-├── model.py          ← U-Net CNN (built from scratch, no pretrained weights)
-├── dataset.py        ← nuScenes data loader + binary mask generator
-├── train.py          ← Full training pipeline
-├── gui_app.py        ← Desktop GUI with webcam feed
-├── server.py         ← Flask backend (powers the website)
-├── index.html        ← Website frontend
-├── requirements.txt
-├── data/
-│   ├── images/       ← Put your nuScenes .jpg images here
-│   └── masks/        ← Put your nuScenes annotation .png masks here
-└── checkpoints/      ← Best model saved here automatically
-```
+## Problem Statement
 
----
+Level 4 autonomous vehicles must identify "Free Space" — areas where the car can physically move — regardless of whether lane markings exist. This project performs pixel-wise semantic segmentation classifying every pixel as either **Drivable** (green) or **Non-Drivable** (red) in complex urban environments including edge cases like road-to-grass transitions, water puddles, and construction barriers.
 
-## Step 1 — Install Python and dependencies
-
-Make sure you have Python 3.9+ installed.
-
-Open a terminal (Command Prompt on Windows) and run:
-
-```bash
-pip install -r requirements.txt
-```
-
-For NVIDIA GPU support (MUCH faster training), install PyTorch with CUDA:
-Visit https://pytorch.org/get-started/locally/ and select your CUDA version.
-Example for CUDA 12.1:
-```bash
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
-```
-
----
-
-## Step 2 — Prepare the nuScenes dataset
-
-1. Download nuScenes from https://www.nuscenes.org/nuscenes (free academic license)
-2. Extract images and their semantic segmentation masks
-3. Place images in `data/images/` and masks in `data/masks/`
-   - Image files: `data/images/abc123.jpg`
-   - Mask files:  `data/masks/abc123.png`  (same filename, grayscale with class IDs)
-
-The drivable class ID in nuScenes is **24** (driveable_surface).
-You can adjust this in `dataset.py` → `DRIVABLE_CLASS_IDS` set.
-
----
-
-## Step 3 — Verify your setup
-
-```bash
-python model.py
-```
-You should see:
-```
-Input  shape: torch.Size([2, 3, 256, 512])
-Output shape: torch.Size([2, 2, 256, 512])
-Total parameters: 7,xxx,xxx
-```
-
-```bash
-python dataset.py
-```
-You should see:
-```
-[Dataset] train: NNN samples
-Image shape : torch.Size([3, 256, 512])
-Mask  shape : torch.Size([256, 512])
-Mask values : tensor([0, 1])
-```
-
----
-
-## Step 4 — Train the model
-
-```bash
-python train.py
-```
-
-Training runs for 100 epochs and prints progress like:
-```
-Epoch  1/100 | Train Loss: 0.6234 | Val Loss: 0.5891 | Val mIoU: 0.4123
-  ✓ New best model saved (mIoU=0.4123)
-Epoch  2/100 | ...
-```
-
-The best model is automatically saved to `checkpoints/best_model.pth`.
-
-Training time: ~2–4 hours on a mid-range NVIDIA GPU for 100 epochs.
-
----
-
-## Step 5 — Run the desktop GUI
-
-```bash
-python gui_app.py
-```
-
-- Click "Load Model" → select `checkpoints/best_model.pth`
-- Click "Start Webcam" to see live segmentation
-- Or click "Load Image" to segment a single photo
-- Green = drivable, Red = non-drivable
-
----
-
-## Step 6 — Run the website
-
-Open TWO terminals:
-
-**Terminal 1 — start the backend server:**
-```bash
-python server.py
-```
-You should see:
-```
-[Server] Model loaded on CUDA
-[Server] Running on http://localhost:5000
-```
-
-**Terminal 2 — open the website:**
-Simply open `index.html` in your browser (double-click the file).
-
-OR serve it with Python:
-```bash
-python -m http.server 8080
-```
-Then open http://localhost:8080 in your browser.
-
----
-
-## Model architecture summary
+## Project Structure
 
 ```
-Input (3, 256, 512)
-  └── Encoder block 1 → 32 channels
-  └── Encoder block 2 → 64 channels
-  └── Encoder block 3 → 128 channels
-  └── Encoder block 4 → 256 channels
-       └── Bottleneck  → 512 channels
-       └── Decoder block 4 + skip → 256 channels
-       └── Decoder block 3 + skip → 128 channels
-       └── Decoder block 2 + skip → 64 channels
-       └── Decoder block 1 + skip → 32 channels
-            └── Final conv (1×1) → 2 channels
+├── model.py          <- U-Net CNN built from scratch (no pretrained weights)
+├── dataset.py        <- nuScenes data loader + binary mask generator
+├── train.py          <- Full training pipeline (Dice + CE loss, AdamW, cosine LR)
+├── prepare_data.py   <- Converts nuScenes v1.0-mini into training-ready data
+├── gui_app.py        <- Desktop GUI with live webcam segmentation
+├── server.py         <- Flask backend API
+├── index.html        <- Website frontend
+└── requirements.txt
+```
+
+## Model Architecture
+
+Custom U-Net with encoder-decoder structure and skip connections:
+
+```
+Input (3, 256, 512) — RGB image
+  Encoder Block 1 -> 32 channels  + MaxPool
+  Encoder Block 2 -> 64 channels  + MaxPool
+  Encoder Block 3 -> 128 channels + MaxPool
+  Encoder Block 4 -> 256 channels + MaxPool
+    Bottleneck    -> 512 channels
+  Decoder Block 4 + skip -> 256 channels
+  Decoder Block 3 + skip -> 128 channels
+  Decoder Block 2 + skip -> 64 channels
+  Decoder Block 1 + skip -> 32 channels
+  Final Conv (1x1) -> 2 channels
 Output (2, 256, 512) — per-pixel class logits
 ```
 
-Each encoder/decoder block uses: Conv2d → BatchNorm → ReLU → Conv2d → BatchNorm → ReLU
+Each encoder/decoder block: Conv2d -> BatchNorm -> ReLU -> Conv2d -> BatchNorm -> ReLU
 
----
+**No pretrained weights used. Trained from scratch as required.**
 
-## Evaluation metrics
+## Setup and Installation
 
-| Metric    | Description                                         |
-|-----------|-----------------------------------------------------|
-| mIoU      | Mean Intersection over Union (primary metric)       |
-| FPS       | Frames per second at inference (speed)              |
-| Precision | Of predicted drivable pixels, how many are correct  |
-| Recall    | Of actual drivable pixels, how many were found      |
-| F1        | Harmonic mean of precision and recall               |
+### Requirements
+- Python 3.12
+- NVIDIA GPU with CUDA 12.1+
 
----
+### Install dependencies
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+pip install opencv-python Pillow flask flask-cors numpy
+```
 
-## Troubleshooting
+### Prepare nuScenes data
+1. Download nuScenes v1.0-mini from https://www.nuscenes.org
+2. Update NUSCENES_ROOT path in prepare_data.py
+3. Run:
+```bash
+py -3.12 prepare_data.py
+```
 
-**CUDA out of memory**: Reduce `batch_size` in `train.py` CONFIG to 4 or 2.
+### Train the model
+```bash
+py -3.12 train.py
+```
 
-**Webcam not found**: Change `cv2.VideoCapture(0)` to `cv2.VideoCapture(1)` in `gui_app.py`.
+Training saves the best checkpoint automatically to checkpoints/best_model.pth.
 
-**Website cannot reach server**: Make sure `python server.py` is running before opening `index.html`.
+### Run desktop GUI
+```bash
+py -3.12 gui_app.py
+```
+- Click Load Model and select checkpoints/best_model.pth
+- Click Start Webcam for live segmentation
+- Or click Load Image to test on a photo
 
-**Low mIoU**: Try training for more epochs, or check that your mask class IDs match `DRIVABLE_CLASS_IDS` in `dataset.py`.
+### Run website
+Terminal 1:
+```bash
+py -3.12 server.py
+```
+Terminal 2:
+```bash
+py -3.12 -m http.server 8080
+```
+Open http://localhost:8080 in your browser.
+
+## Training Details
+
+- **Loss function:** Dice Loss + Cross Entropy Loss (50/50 weighted)
+- **Optimizer:** AdamW (lr=1e-3, weight_decay=1e-4)
+- **Scheduler:** Cosine Annealing LR
+- **Mixed precision:** FP16 training via torch.amp
+- **Batch size:** 8
+- **Epochs:** 100
+- **Input resolution:** 256x512
+
+## Data Augmentation
+
+- Random horizontal flip
+- Color jitter (brightness, contrast, saturation, hue)
+- Random crop and resize
+- Gaussian blur
+- Grayscale simulation for weather/night conditions
+- Random vertical shift for camera pitch simulation
+
+## Evaluation Metrics
+
+| Metric | Description |
+|--------|-------------|
+| mIoU | Mean Intersection over Union — primary metric |
+| FPS | Inference speed — real-time performance |
+| Precision | Correctly predicted drivable pixels |
+| Recall | Drivable pixels correctly found |
+| F1 Score | Harmonic mean of precision and recall |
+
+## Team
+
+MAHE Mobility Hackathon — Problem Statement 2: Real-time Drivable Space Segmentation
